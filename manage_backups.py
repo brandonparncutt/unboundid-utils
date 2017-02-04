@@ -26,6 +26,8 @@ from optparse import OptionParser, OptionGroup
 timestamp = '[' + time.strftime('%Y/%m/%d - %H:%M:%S') + ']  '
 # Email recipients for notifications
 toaddr = ('brandon.parncutt@gmail.com',)
+# Email sending address
+fromaddr = '%s@domain-here.com' % os.uname()[1]
 # relay server
 mail_server = 'localhost'
 mail_server_port = 25
