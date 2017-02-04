@@ -35,7 +35,6 @@ mail_server_port = 25
 
 def send_email(body=None):
     emailout = Logger()
-    fromaddr = '%s@techdata.com' % os.uname()[1]
     subject_header = 'Subject: Backup Notification -- %s' % (
                                     time.strftime("%a, %d %b %Y %H:%M:%S %p"))
     from_header = "From: %s\r\n" % fromaddr
