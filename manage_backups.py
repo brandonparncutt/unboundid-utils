@@ -1,12 +1,11 @@
 #!/usr/bin/env python
-#
 # manage_backups.py
 
 
 """
-manage_backups.py:  python script which manages backups and backup options as
-well as location and cleanup. it will alert when something fails and keep logs
-of everything.
+manage_backups.py:  script to manage Unbound ID (now known as Ping ID) backups
+and backup operations, including restores and rotation. It can be executed on
+the command-line / crontab, and includes an option to install itself in cron.
 """
 
 
@@ -25,9 +24,9 @@ from optparse import OptionParser, OptionGroup
 # Timestamp format for log file
 timestamp = '[' + time.strftime('%Y/%m/%d - %H:%M:%S') + ']  '
 # Email recipients for notifications
-toaddr = ('brandon.parncutt@gmail.com',)
-# Email sending address
-fromaddr = '%s@domain-here.com' % os.uname()[1]
+toaddr = ('brandon.parncutt@techdata.com',)
+# Sending address
+fromaddr = '%s@somedomain.com' % os.uname()[1]
 # relay server
 mail_server = 'localhost'
 mail_server_port = 25
@@ -45,7 +44,7 @@ def send_email(body=None):
     try:
         sendit.sendmail(fromaddr, toaddr, email_message)
     except smtplib.SMTPException as emailerr:
-        errmsg = sys.exc_info()
+        errmsg = (sys.exc_info()[0], sys.exc_info()[1])
         for part in errmsg:
             emailout.write(part)
     finally:
@@ -150,18 +149,14 @@ class BackupActions(object):
             mfree = freebytes / (1024 ** 2)
             self.out.write("Checking size...There are " + str(mfree) +
                            "MB free...continuing...")
-            for dir in ['today', 'daily', 'weekly', 'monthly', 'yearly']:
-                try:
-                    os.mkdir(path + '/' + dir)
-                except OSError:
-                    continue
             backuplist = BackupActions.enumerateBackups(path)
             # Build a list of backup IDs (each backend can share a backup ID)
             backupids = list(set([backup[2][0][0] for backup in backuplist]))
             # Build a list of backup folders (the object of file operations)
             backupfolders = sorted(
                 list(set(
-                    [os.path.split(backup[1])[:-1][0] for backup in backuplist])))
+                    [os.path.split(backup[1])[:-1][0] for backup in
+                     backuplist])))
             excludelist = ('daily', 'weekly', 'today', 'yearly', 'monthly')
             backupfolders[:] = [
                 d for d in backupfolders if not d.endswith(excludelist)]
@@ -179,11 +174,11 @@ class BackupActions(object):
                 if datetime.datetime.isoweekday(yesterday) == 6:
                     weeklydest = yesterday.strftime('%Y%m%d-%U')
                     shutil.copytree(path + '/daily/' + yesterdir,
-                                path + '/weekly/' + weeklydest)
+                                    path + '/weekly/' + weeklydest)
                 if yesterday.strftime('%m') != today.strftime('%m'):
                     shutil.copytree(path + '/daily/' + yesterdir,
                                     path + '/monthly/' + yesterday.strftime(
-                                        '%m'))
+                                        '%Y%m'))
                 if yesterday.strftime('%m%d') == '1231':
                     year = yesterday.strftime('%Y')
                     shutil.copytree(path + '/daily/' + yesterdir,
@@ -215,7 +210,8 @@ class Backup(object):
     """
 
     def __init__(self, command, options):
-        self.options = { k: options[k] for k in options if options[k] != None }
+        self.options = {k: options[k] for k in options if options[k] is not
+                        None}
         self.logfile = self.options.pop('logfile')
         self.datestart = time.strftime("%a, %d %b %Y %H:%M:%S %p")
         self.timestart = time.time()
@@ -232,8 +228,8 @@ class Backup(object):
             self.log.close()
 
     def parse_args(self, **args):
-        pargs = [ '--{0}'.format(k) for k in args.keys() if args[k] == True ]
-        for key in (k for k in args.keys() if args[k] == True):
+        pargs = ['--{0}'.format(k) for k in args.keys() if args[k] is True]
+        for key in (k for k in args.keys() if args[k] is True):
             del args[key]
         kargs = []
         for key, value in args.items():
@@ -241,7 +237,8 @@ class Backup(object):
                 val = ' '.join(value)
             else:
                 val = value
-            kargs.append("--{0} {1}".format(key, val))
+            kargs.append("--{0}".format(key))
+            kargs.append("{0}".format(value))
         args = pargs + kargs
         args.insert(0, self.command)
         self.sysout = Logger()
@@ -294,7 +291,6 @@ class Cron(object):
             configfile.write(self.path + "\n")
             configfile.write(str(self.freespace) + "\n")
             configfile.write(str(self.maxarchives) + "\n")
-        Cron.analyze(self.path, self.freespace)
         if 'setupcron' in self.options:
             self.cronopts = self.options['setupcron']
             try:
@@ -350,7 +346,7 @@ class Cron(object):
         if not wanted <= actual:
             with open(options.logfile, 'a+') as log:
                 log.write(timestamp + 'The minimum space specified is not ' +
-                          'available...cannot continue.')
+                          'available...cannot continue.' + '\n')
             raise IOError('The minimum space specified is not available...'
                           'cannot continue.' + '\n')
         else:
@@ -372,10 +368,47 @@ class Cron(object):
             dailyjob.set_comment("DS BACKUP-DAILY")
         if hourly:
             hourlyjob = self.cron.new(command=hourlycmd)
-            hourlyjob.minute.on(59)
+            hourlyjob.minute.on(30)
             hourlyjob.set_comment("DS BACKUP-HOURLY")
         self.cron.env['PATH'] = os.environ['PATH']
         self.cron.write()
+        if not os.path.exists(self.path):
+            try:
+                os.mkdir(self.path)
+            except IOError:
+                errmsg = ('Error creating folder: %s, %s' %
+                          (os.path.join(self.path, dir), sys.exc_info()[1]))
+                self.cronout.write(errmsg)
+                pass
+        for dir in ['today', 'daily', 'weekly', 'monthly', 'yearly']:
+            if not os.path.exists(os.path.join(self.path, dir)):
+                try:
+                    os.mkdir(self.path + '/' + dir)
+                except IOError:
+                    errmsg = ('Error creating folder: %s, %s' %
+                              (os.path.join(self.path, dir),
+                              sys.exc_info()[1]))
+                    self.cronout.write(errmsg)
+                    continue
+        try:
+            Cron.analyze(self.path, self.freespace)
+        except IOError:
+            errmsg = ('The current setting for minimum "--free-space" is '
+                      'not possible. The backup scripts will not run'
+                      ' until this has been rectified '
+                      '(remove files, increase setting, etc.).')
+            self.cronout.write(errmsg)
+        else:
+            backuppath = self.path + '/today'
+            backupid = datetime.date.today().strftime('%a-%Y%m%d')
+            backupdict = {'backUpAll': True, 'compress': True,
+                          'backupDirectory': backuppath,
+                          'backupID': backupid,
+                          'logfile': options.logfile}
+            print('Creating first backup for crons...')
+            time.sleep(3)
+            cronBackup = Backup('backup', backupdict)
+            cronBackup.run()
 
 
 class Restore(Backup):
@@ -395,7 +428,7 @@ if __name__ == '__main__':
     - restore
     - setup-cron (recommended backup method)
 '''
-    version = '%prog:  1.0'
+    version = '%prog:  1.1'
     parser = OptionParser(usage=usage, version=version)
     parser.add_option("-I", "--backupID", action="store", type="string",
                       dest="backupID", help="?? -- the completed backup name")
@@ -410,8 +443,8 @@ if __name__ == '__main__':
     backuphelp = OptionGroup(parser, "Backup Options",
                             "These options are only compatible with the "
                             "'backup' command.")
-    backuphelp.add_option("-a", "--backupAll", action="store_true",
-                      dest="backupAll",
+    backuphelp.add_option("-a", "--backUpAll", action="store_true",
+                      dest="backUpAll",
                       help="?? -- backup all backends")
     backuphelp.add_option("-i", "--incremental", action="store_true",
                       dest="incremental",
@@ -461,9 +494,9 @@ if __name__ == '__main__':
     (options, args) = parser.parse_args()
     if not args:
         parser.print_help()
-    if options.backupAll and options.backendID:
+    if options.backUpAll and options.backendID:
         parser.error("Options '--%s' and '--%s' are mutually exclusive" % (
-                     'backupAll', 'backendID'))
+                     'backUpAll', 'backendID'))
     if options.incremental:
         if not options.incrementalBaseID:
             parser.error("A base ID for original backup [-B] must be" +
@@ -479,8 +512,8 @@ if __name__ == '__main__':
                     cronbackup.rotate()
                 except:
                     msg = ("!! Data Store Backup Problem !!\n\nThere was an "
-                           "issue with rotating backups:\n\n%s" %
-                           sys.exc_info())
+                           "issue with rotating backups:\n\n%s, %s" %
+                           sys.exc_info()[0], sys.exc_info()[1])
                     send_email(body=msg)
             else:
                 cronbackup = BackupActions()
