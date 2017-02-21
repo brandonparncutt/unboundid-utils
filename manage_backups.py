@@ -35,7 +35,7 @@ mail_server_port = 25
 def send_email(body=None):
     emailout = Logger()
     subject_header = 'Subject: Backup Notification -- %s' % (
-                                    time.strftime("%a, %d %b %Y %H:%M:%S %p"))
+        time.strftime("%a, %d %b %Y %H:%M:%S %p"))
     from_header = "From: %s\r\n" % fromaddr
     to_header = "To: %s\r\n\r\n" % toaddr
     body = body
@@ -53,24 +53,26 @@ def send_email(body=None):
 
 
 class Logger(object):
+
     def __init__(self):
         self.terminal = sys.stdout
         self.log = open(options.logfile, "a+")
+        self.timestamp = ('[' + time.strftime('%Y/%m/%d - %H:%M:%S') + ']  ')
 
     def write(self, message):
         self.terminal.write(message + '\n')
-        self.log.write(timestamp + message + '\n')
+        self.log.write(self.timestamp + message + '\n')
 
     def flush(self):
         self.log.flush()
 
 
 class BackupActions(object):
+
     """ enumerate and rotate backups in path, according to preset config """
 
-    def __init__(self, incremental=False):
+    def __init__(self):
         self.out = Logger()
-        self.hourly = incremental
 
     @staticmethod
     def get_size(path):
@@ -134,11 +136,9 @@ class BackupActions(object):
     def rotate(self):
         with open(os.environ['HOME'] + '/.backup_config') as config:
             path = config.readline().rstrip()
-            freespace = int(config.readline().rstrip())
             maxarchives = int(config.readline().rstrip())
             try:
-                freebytes = int(Cron.analyze(path, freespace))
-                # logit = BackupActions(path)
+                freebytes = int(Cron.analyze(path))
             except IOError:
                 msg = ('\n!! Data Store backup failure !!\n\n'
                        'There is not enough free space to continue.'
@@ -151,7 +151,7 @@ class BackupActions(object):
                            "MB free...continuing...")
             backuplist = BackupActions.enumerateBackups(path)
             # Build a list of backup IDs (each backend can share a backup ID)
-            backupids = list(set([backup[2][0][0] for backup in backuplist]))
+            # backupids = list(set([backup[2][0][0] for backup in backuplist]))
             # Build a list of backup folders (the object of file operations)
             backupfolders = sorted(
                 list(set(
@@ -167,10 +167,11 @@ class BackupActions(object):
             yesterdir = yesterday.strftime('%Y%m%d')
             weekdaynum = datetime.datetime.isoweekday(today)
             weeknum = today.strftime('%U')
-            if not self.hourly:
-                old = glob.glob(path + '/today/*')
+            old = glob.glob(path + '/today/*')
+            try:
+                os.mkdir(path + '/daily/' + yesterdir)
                 for backend in old:
-                    shutil.move(backend, path + '/daily/' + yesterdir)
+                    shutil.move(backend, path + '/daily/' + yesterdir + '/')
                 if datetime.datetime.isoweekday(yesterday) == 6:
                     weeklydest = yesterday.strftime('%Y%m%d-%U')
                     shutil.copytree(path + '/daily/' + yesterdir,
@@ -196,14 +197,22 @@ class BackupActions(object):
                             shutil.rmtree(folder, ignore_errors=True)
                 if today.strftime('%m') != tomorrow.strftime('%m'):
                     shutil.rmtree(path + '/monthly/' + today.strftime('%m'))
-            if count > maxarchives:
-                difference = count - maxarchives
-                deletelist = backupfolders[:difference]
-                for folder in deletelist:
-                    shutil.rmtree(folder[0], ignore_errors=True)
+                if count > maxarchives:
+                    difference = count - maxarchives
+                    deletelist = backupfolders[:difference]
+                    for folder in deletelist:
+                        shutil.rmtree(folder[0], ignore_errors=True)
+            except Exception:
+                self.out.write(sys.exc_info()[1], sys.exc_info[2],
+                               sys.exc_info()[3])
+                return False
+            else:
+                self.out.write('! Backups Rotated !')
+                return True
 
 
 class Backup(object):
+
     """
     backup datastore depending on options and save output / errors for logs or
     email notifications
@@ -250,8 +259,10 @@ class Backup(object):
 
     def run(self):
         cmdargs = self.parse_args(**self.options)
+        if os.getenv('CRON'):
+            self.sysout.write('\n' + timestamp + '! Running job from cron !\n')
         cmd = Popen(cmdargs, stdout=PIPE, stderr=PIPE,
-                        universal_newlines=True)
+                    universal_newlines=True)
         cmdstdout, cmdstderr = cmd.communicate()
         if cmd.returncode != 0:
             errormsg = ("\n'%s':\n\n\nOUTPUT:\n%s\nERROR:\n%s" %
@@ -269,18 +280,14 @@ class Backup(object):
 
 
 class Cron(object):
+
     """
     Take scheduled backups and rotate them as neeeded.
     """
 
     def __init__(self, options):
         self.cronout = Logger()
-        self.options = { k: options[k] for k in options if options[k] != None }
-        self.freespace = int(self.options['freespace'][:-1])
-        if self.options['freespace'].endswith('M'):
-            self.freespace *= (1024 ** 2)
-        if self.options['freespace'].endswith('G'):
-            self.freespace *= (1024 ** 3)
+        self.options = {k: options[k] for k in options if options[k] != None}
         self.path = os.path.abspath(self.options['backupDirectory'])
         try:
             self.maxarchives = int(self.options['maxbackups'])
@@ -289,7 +296,6 @@ class Cron(object):
         homefolder = os.environ['HOME']
         with open(homefolder + '/.backup_config', 'w') as configfile:
             configfile.write(self.path + "\n")
-            configfile.write(str(self.freespace) + "\n")
             configfile.write(str(self.maxarchives) + "\n")
         if 'setupcron' in self.options:
             self.cronopts = self.options['setupcron']
@@ -302,10 +308,12 @@ class Cron(object):
                 sys.exit(1)
             finally:
                 class crontab(CronTab):
+
                     """
                     this is a wrapper class to circumvent a bug in the crontab
                     module which causes an error.
                     """
+
                     def __init__(self, **kargs):
                         import logging
                         LOG = logging.getLogger(
@@ -338,10 +346,10 @@ class Cron(object):
         return crons
 
     @staticmethod
-    def analyze(path, freespace):
+    def analyze(path):
         used = BackupActions.get_size(path)
-        wanted = freespace
         fs = os.statvfs(path)
+        wanted = (fs.f_frsize * fs.f_blocks) * .1  # backup minimum requirement
         actual = fs.f_frsize * (fs.f_bfree * .95)  # Account for reserved %
         if not wanted <= actual:
             with open(options.logfile, 'a+') as log:
@@ -365,12 +373,15 @@ class Cron(object):
         if daily:
             dailyjob = self.cron.new(command=dailycmd)
             dailyjob.hour.on(00)
+            dailyjob.minute.on(7)
             dailyjob.set_comment("DS BACKUP-DAILY")
         if hourly:
             hourlyjob = self.cron.new(command=hourlycmd)
-            hourlyjob.minute.on(30)
+            hourlyjob.minute.on(37)
             hourlyjob.set_comment("DS BACKUP-HOURLY")
         self.cron.env['PATH'] = os.environ['PATH']
+        self.cron.env['TERM'] = 'xterm'
+        self.cron.env['CRON'] = True
         self.cron.write()
         if not os.path.exists(self.path):
             try:
@@ -387,14 +398,14 @@ class Cron(object):
                 except IOError:
                     errmsg = ('Error creating folder: %s, %s' %
                               (os.path.join(self.path, dir),
-                              sys.exc_info()[1]))
+                               sys.exc_info()[1]))
                     self.cronout.write(errmsg)
                     continue
         try:
-            Cron.analyze(self.path, self.freespace)
+            Cron.analyze(self.path)
         except IOError:
-            errmsg = ('The current setting for minimum "--free-space" is '
-                      'not possible. The backup scripts will not run'
+            errmsg = ('The backup utility requires 10% free space at a '
+                      'minimum. The backup scripts will not run'
                       ' until this has been rectified '
                       '(remove files, increase setting, etc.).')
             self.cronout.write(errmsg)
@@ -412,6 +423,7 @@ class Cron(object):
 
 
 class Restore(Backup):
+
     """
     restore from specified backup
     """
@@ -428,7 +440,7 @@ if __name__ == '__main__':
     - restore
     - setup-cron (recommended backup method)
 '''
-    version = '%prog:  1.1'
+    version = '%prog:  1.2'
     parser = OptionParser(usage=usage, version=version)
     parser.add_option("-I", "--backupID", action="store", type="string",
                       dest="backupID", help="?? -- the completed backup name")
@@ -441,23 +453,24 @@ if __name__ == '__main__':
                       dest="logfile")
 
     backuphelp = OptionGroup(parser, "Backup Options",
-                            "These options are only compatible with the "
-                            "'backup' command.")
+                             "These options are only compatible with the "
+                             "'backup' command.")
     backuphelp.add_option("-a", "--backUpAll", action="store_true",
-                      dest="backUpAll",
-                      help="?? -- backup all backends")
+                          dest="backUpAll",
+                          help="?? -- backup all backends")
     backuphelp.add_option("-i", "--incremental", action="store_true",
-                      dest="incremental",
-                      help="?? -- perform incremental from previous backup[-B]",
-                      )
+                          dest="incremental",
+                          help=("?? -- perform incremental from "
+                                "previous backup[-B]"))
     backuphelp.add_option("-B", "--incrementalBaseID", action="store",
-                      type="string", dest="incrementalBaseID",
-                      help="?? -- the ID of original backup to increment")
+                          type="string", dest="incrementalBaseID",
+                          help="?? -- the ID of original backup to increment")
     backuphelp.add_option("-c", "--compress", action="store_true",
                           dest="compress", help="?? -- compresses the backup "
                           "when flag is present")
     backuphelp.add_option("-n", "--backendID", action="append", type="string",
-                      dest="backendID", help="?? -- backup just this backend")
+                          dest="backendID",
+                          help="?? -- backup just this backend")
     parser.add_option_group(backuphelp)
 
     restorehelp = OptionGroup(parser, "Restore Options",
@@ -470,25 +483,22 @@ if __name__ == '__main__':
                            dest="dry-run")
     parser.add_option_group(restorehelp)
 
-    cronhelp = OptionGroup(parser, "Cron-mode Options",
-                             "These options are only to be used with "
-                             "the 'cron-mode' command. When run in this mode "
-                             "backups are automatic: daily (up to --max), and "
-                             "hourly (for the userRoot backend). It will handle"
-                             " backup rotation, minding the 'freespace' option."
-                             " Entries will need to be added in crontab "
-                             "to begin using, with '--setup [daily|hourly]'.")
-    cronhelp.add_option("-f", "--free-space", action="store",
-                           dest="freespace",
-                           help="?? -- Amount of space to keep free on backup "
-                           "partition. Units: [M]egabytes, [G]igabytes",
-                           metavar="FREESPACE[MG]")
+    cronhelp = OptionGroup(parser, "Cron-setup Options",
+                           "These options are only to be used with "
+                           "the 'cron-mode' command. When run in this mode "
+                           "backups are automatic: daily (up to --max), and "
+                           "hourly (for the userRoot backend). It will handle"
+                           " backup rotation, if 10% of disk is available."
+                           " Entries will need to be added in crontab "
+                           "to begin using, with '--setup [daily|hourly]'.")
     cronhelp.add_option("-m", "--max", action="store", dest="maxbackups",
                         help="?? -- maximum number of backups to keep",
                         metavar="NUM")
     cronhelp.add_option("-s", "--setup", action="append", dest="setupcron",
-                        help="?? -- adds entries to user's crontab for "
-                        "[hourly/daily] backup jobs", metavar="hourly daily")
+                        help=("--setup=hourly --setup=daily \
+                              ?? -- adds entries to user's crontab for "
+                              "[hourly/daily] backup jobs"),
+                        metavar="HOURLY/DAILY")
     parser.add_option_group(cronhelp)
 
     (options, args) = parser.parse_args()
@@ -500,32 +510,28 @@ if __name__ == '__main__':
     if options.incremental:
         if not options.incrementalBaseID:
             parser.error("A base ID for original backup [-B] must be" +
-            " specified for an incremental backup.")
+                         " specified for an incremental backup.")
     if 'backup' in args:
         if not options.backupDirectory:
             parser.error("The destination for backup must be specified.")
         backupoptions = options.__dict__
-        if not sys.stdout.isatty():
-            if options.incremental:
-                cronbackup = BackupActions(incremental=True)
-                try:
-                    cronbackup.rotate()
-                except:
-                    msg = ("!! Data Store Backup Problem !!\n\nThere was an "
-                           "issue with rotating backups:\n\n%s, %s" %
-                           sys.exc_info()[0], sys.exc_info()[1])
-                    send_email(body=msg)
-            else:
+        if not options.incremental:
+            if os.getenv('CRON'):
                 cronbackup = BackupActions()
                 try:
                     cronbackup.rotate()
                 except:
-                    msg = ("!! Data Store Backup Problem !!\n\nThere was an "
-                           "issue with rotating files:\n\n%s %s" %
-                           (sys.exc_info()[0], sys.exc_info()[1]))
+                    msg = ("!! Data Store Backup Error !!\n\nThere was an "
+                           "issue with rotating files:\n\n%s %s %s" %
+                           (sys.exc_info()[0], sys.exc_info()[1],
+                            sys.exc_info()[2]))
                     send_email(body=msg)
-        newbackup = Backup('backup', backupoptions)
-        newbackup.run()
+                finally:
+                    newbackup = Backup('backup', backupoptions)
+                    newbackup.run()
+        else:
+            newbackup = Backup('backup', backupoptions)
+            newbackup.run()
     elif 'restore' in args:
         if not options.backupDirectory:
             parser.error("Path to the directory containing the backups must"
@@ -536,30 +542,9 @@ if __name__ == '__main__':
     elif 'setup-cron' in args:
         if not options.backupDirectory:
             parser.error("Path to backups folder must be specified.")
-        if not options.freespace:
-            pathstat = os.stat(options.backupDirectory)
-            rootstat = os.stat('/')
-            if pathstat.st_dev == rootstat.st_dev:
-                parser.print_help()
-                parser.error("'freespace' option must be specified when backups"
-                             " folder shares a partition with the OS to prevent"
-                             " system failure...\nBe sure to include enough "
-                             "space for normal system functionality and logs.")
-            else:
-                options.freespace = '200M'
-        else:
-            regex = re.compile('(\d+[M|G])')
-            options.freespace = options.freespace.upper()
-            try:
-                result = regex.match(options.freespace)
-                options.freespace = result.group(0)
-            except:
-                parser.print_help()
-                parser.error("Invalid syntax:\nPlease correct the 'freespace'"
-                             " option and try again.")
         setcron = Cron(options.__dict__)
         setcron.run()
     elif 'menu' in args:
-        print("This feature will be coming very soon!")
+        print("This feature will be coming soon!")
     else:
         print("\n\nCome on, fat fingers!!! Check your command!\n\n")
