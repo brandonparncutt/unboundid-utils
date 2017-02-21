@@ -24,7 +24,7 @@ from optparse import OptionParser, OptionGroup
 # Timestamp format for log file
 timestamp = '[' + time.strftime('%Y/%m/%d - %H:%M:%S') + ']  '
 # Email recipients for notifications
-toaddr = ('brandon.parncutt@techdata.com',)
+toaddr = ('brandon.parncutt@gmail.com',)
 # Sending address
 fromaddr = '%s@somedomain.com' % os.uname()[1]
 # relay server
