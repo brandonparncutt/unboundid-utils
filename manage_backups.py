@@ -201,7 +201,7 @@ class BackupActions(object):
                     difference = count - maxarchives
                     deletelist = backupfolders[:difference]
                     for folder in deletelist:
-                        shutil.rmtree(folder[0], ignore_errors=True)
+                        shutil.rmtree(folder, ignore_errors=True)
             except Exception:
                 self.out.write(sys.exc_info()[1], sys.exc_info[2],
                                sys.exc_info()[3])
